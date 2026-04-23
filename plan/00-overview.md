@@ -20,6 +20,7 @@ StudyAgent 是一个 AI 驱动的学习助手，专为具有高认知能力的�
 | 06 | [Tutor Persona Spec](06-tutor-persona-spec.md) | 导师角色原始系统提示词、教学协议、认知工具、质量评估 |
 | 07 | [Agent Prompts Design](07-agent-prompts-design.md) | 所有Agent系统提示词、上下文构建、对话流程示例 |
 | 08 | [Development Roadmap](08-development-roadmap.md) | 5阶段开发路线图、任务拆解、风险评估、成功指标 |
+| 09 | [Learning Algorithms Spec](09-learning-algorithms-spec.md) | FSRS-5完整数学公式、BKT知识追踪、ZPD估计、学习路径优化 |
 
 ## Architecture at a Glance
 
