@@ -8,10 +8,12 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from studyagent.agents.knowledge_graph.agent import KnowledgeGraphAgent
 from studyagent.agents.tutor.agent import TutorAgent
 from studyagent.api.schemas.chat import ChatRequest, ConversationCreate, ConversationResponse, MessageResponse
 from studyagent.db.engine import create_session_factory
 from studyagent.db.models import Conversation, Message
+from studyagent.db.repositories import ConceptRepo, KnowledgeRepo
 
 router = APIRouter(prefix="/api/v1")
 
@@ -42,6 +44,43 @@ async def _get_or_create_conversation(
     await db.commit()
     await db.refresh(conv)
     return conv
+
+
+async def _extract_and_persist_concepts(
+    messages: list[dict[str, str]],
+    response: str,
+    db: AsyncSession,
+    user_id: str = "default",
+) -> dict:
+    kg_agent = KnowledgeGraphAgent()
+    extraction = await kg_agent.extract_concepts(
+        messages + [{"role": "assistant", "content": response}]
+    )
+    concepts = extraction.get("concepts", [])
+    relations = extraction.get("relations", [])
+
+    if not concepts:
+        return {"extracted": 0, "relations": 0}
+
+    c_repo = ConceptRepo(db)
+    k_repo = KnowledgeRepo(db)
+    persisted = 0
+
+    for c_data in concepts:
+        name = c_data.get("name", "").strip()
+        domain = c_data.get("domain", "general").strip()
+        if not name:
+            continue
+        concept = await c_repo.get_or_create(
+            name=name, domain=domain,
+            description=c_data.get("description"),
+            difficulty=c_data.get("difficulty", 0.5),
+        )
+        await k_repo.get_or_create(user_id=user_id, concept_id=concept.id)
+        persisted += 1
+
+    await db.commit()
+    return {"extracted": persisted, "relations": len(relations)}
 
 
 @router.post("/chat/stream")
@@ -96,7 +135,11 @@ async def stream_chat(request: ChatRequest, db: AsyncSession = Depends(get_db)):
                 conv_update.message_count += 1
             await save_session.commit()
 
-        yield f"data: {json.dumps({'type': 'done', 'conversation_id': conv.id})}\n\n"
+            extraction = await _extract_and_persist_concepts(
+                request.messages, full_response, save_session
+            )
+
+        yield f"data: {json.dumps({'type': 'done', 'conversation_id': conv.id, 'extraction': extraction})}\n\n"
 
     return StreamingResponse(
         event_stream(),
