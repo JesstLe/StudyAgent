@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 import uuid
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends
 from sqlalchemy import select
@@ -11,9 +13,21 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from studyagent.agents.knowledge_graph.agent import KnowledgeGraphAgent
 from studyagent.agents.tutor.agent import TutorAgent
 from studyagent.api.schemas.chat import ChatRequest, ConversationCreate, ConversationResponse, MessageResponse
+from studyagent.core.config import load_config
+from studyagent.core.llm import LLMProvider
 from studyagent.db.engine import create_session_factory
 from studyagent.db.models import Conversation, Message
 from studyagent.db.repositories import ConceptRepo, KnowledgeRepo
+
+_shared_tutor: TutorAgent | None = None
+
+
+def _get_tutor() -> TutorAgent:
+    global _shared_tutor
+    if _shared_tutor is None:
+        config = load_config()
+        _shared_tutor = TutorAgent(LLMProvider(config.llm))
+    return _shared_tutor
 
 router = APIRouter(prefix="/api/v1")
 
@@ -101,12 +115,14 @@ async def stream_chat(request: ChatRequest, db: AsyncSession = Depends(get_db)):
     if not conv.title or conv.title == "New Conversation":
         conv.title = user_content[:50]
     conv.message_count += 1
-    conv.updated_at = time.strftime("%Y-%m-%d %H:%M:%S")
-    await db.commit()
+    conv.updated_at = datetime.now(timezone.utc)
 
-    tutor = TutorAgent()
+    tutor = _get_tutor()
+    conv_id = conv.id
     start = time.time()
-    collected = []
+    collected: list[str] = []
+
+    await db.commit()
 
     async def event_stream():
         async for token in tutor.stream(
@@ -119,27 +135,30 @@ async def stream_chat(request: ChatRequest, db: AsyncSession = Depends(get_db)):
         full_response = "".join(collected)
         latency = int((time.time() - start) * 1000)
 
-        assistant_msg = Message(
-            id=str(uuid.uuid4()),
-            conversation_id=conv.id,
-            role="assistant",
-            content=full_response,
-            model_used=tutor.llm.config.model,
-            latency_ms=latency,
-        )
-        factory = create_session_factory()
-        async with factory() as save_session:
-            save_session.add(assistant_msg)
-            conv_update = await save_session.get(Conversation, conv.id)
-            if conv_update:
-                conv_update.message_count += 1
-            await save_session.commit()
+        yield f"data: {json.dumps({'type': 'done', 'conversation_id': conv_id})}\n\n"
 
-            extraction = await _extract_and_persist_concepts(
-                request.messages, full_response, save_session
+        async def _save_and_extract():
+            assistant_msg = Message(
+                id=str(uuid.uuid4()),
+                conversation_id=conv_id,
+                role="assistant",
+                content=full_response,
+                model_used=tutor.llm.config.model,
+                latency_ms=latency,
             )
+            factory = create_session_factory()
+            async with factory() as save_session:
+                save_session.add(assistant_msg)
+                conv_update = await save_session.get(Conversation, conv_id)
+                if conv_update:
+                    conv_update.message_count += 1
+                await save_session.commit()
 
-        yield f"data: {json.dumps({'type': 'done', 'conversation_id': conv.id, 'extraction': extraction})}\n\n"
+                await _extract_and_persist_concepts(
+                    request.messages, full_response, save_session
+                )
+
+        asyncio.ensure_future(_save_and_extract())
 
     return StreamingResponse(
         event_stream(),

@@ -39,7 +39,12 @@ export async function* streamChat(
       const raw = line.slice(6).trim();
       if (!raw) continue;
       try {
-        yield JSON.parse(raw);
+        const event = JSON.parse(raw);
+        yield event;
+        if (event.type === "done") {
+          reader.cancel();
+          return;
+        }
       } catch { /* skip */ }
     }
   }

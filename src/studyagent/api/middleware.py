@@ -2,34 +2,34 @@ from __future__ import annotations
 
 import time
 from collections import defaultdict
+from typing import Callable, Awaitable
 
-from fastapi import Request, Response
-from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.types import ASGIApp, Receive, Scope, Send, Message
 
 
-class RateLimitMiddleware(BaseHTTPMiddleware):
+class RateLimitMiddleware:
     def __init__(
         self,
-        app,
+        app: ASGIApp,
         requests_per_minute: int = 60,
         burst: int = 10,
     ):
-        super().__init__(app)
+        self.app = app
         self.rpm = requests_per_minute
         self.burst = burst
         self._windows: dict[str, list[float]] = defaultdict(list)
 
-    def _key(self, request: Request) -> str:
-        forwarded = request.headers.get("x-forwarded-for")
+    def _key(self, scope: Scope) -> str:
+        headers: dict[bytes, bytes] = dict(scope.get("headers", []))
+        forwarded = headers.get(b"x-forwarded-for")
         if forwarded:
-            return forwarded.split(",")[0].strip()
-        client = request.client
-        return client.host if client else "unknown"
+            return forwarded.decode().split(",")[0].strip()
+        client = scope.get("client")
+        return client[0] if client else "unknown"
 
     def _check(self, key: str) -> bool:
         now = time.time()
         window = self._windows[key]
-        # Remove entries older than 60s
         self._windows[key] = [t for t in window if now - t < 60]
         window = self._windows[key]
 
@@ -38,19 +38,25 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         self._windows[key].append(now)
         return True
 
-    async def dispatch(self, request: Request, call_next) -> Response:
-        # Skip rate limiting for docs and health
-        path = request.url.path
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        path = scope.get("path", "")
         if path in ("/docs", "/redoc", "/openapi.json", "/health"):
-            return await call_next(request)
+            await self.app(scope, receive, send)
+            return
 
-        key = self._key(request)
+        key = self._key(scope)
         if not self._check(key):
-            return Response(
-                content='{"detail":"Rate limit exceeded"}',
-                status_code=429,
-                media_type="application/json",
-                headers={"Retry-After": "60"},
-            )
+            body = b'{"detail":"Rate limit exceeded"}'
+            await send({"type": "http.response.start", "status": 429, "headers": [
+                [b"content-type", b"application/json"],
+                [b"retry-after", b"60"],
+                [b"content-length", str(len(body)).encode()],
+            ]})
+            await send({"type": "http.response.body", "body": body})
+            return
 
-        return await call_next(request)
+        await self.app(scope, receive, send)
