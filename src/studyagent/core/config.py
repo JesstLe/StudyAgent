@@ -48,6 +48,8 @@ class AppConfig(BaseSettings):
     database: DatabaseConfig = Field(default_factory=DatabaseConfig)
     server: ServerConfig = Field(default_factory=ServerConfig)
     agent: AgentConfig = Field(default_factory=AgentConfig)
+    redis_url: str = Field(default="")
+    rate_limit_rpm: int = Field(default=60, ge=1)
 
     model_config = SettingsConfigDict(
         env_file=str(PROJECT_ROOT / ".env"),

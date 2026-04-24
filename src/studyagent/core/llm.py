@@ -8,6 +8,10 @@ from studyagent.core.config import LLMConfig
 
 
 class LLMProvider:
+    _EXTRA_HEADERS: dict[str, str] = {
+        "User-Agent": "claude-code/1.0",
+    }
+
     def __init__(self, config: LLMConfig | None = None):
         if config is None:
             from studyagent.core.config import load_config
@@ -22,7 +26,21 @@ class LLMProvider:
             return f"ollama/{model}"
         if provider == "anthropic":
             return model if model.startswith("claude") else f"anthropic/{model}"
+        if provider == "openai" and self.config.base_url:
+            return f"openai/{model}"
         return model
+
+    def _common_kwargs(self, **overrides: object) -> dict:
+        kwargs: dict = {
+            "model": self._model_name(),
+            "temperature": self.config.temperature,
+            "max_tokens": self.config.max_tokens,
+            "api_key": self.config.api_key or None,
+            "api_base": self.config.base_url or None,
+            "extra_headers": self._EXTRA_HEADERS,
+        }
+        kwargs.update(overrides)
+        return {k: v for k, v in kwargs.items() if v is not None}
 
     async def generate(
         self,
@@ -36,15 +54,13 @@ class LLMProvider:
             all_messages.append({"role": "system", "content": system})
         all_messages.extend(messages)
 
-        response = await litellm.acompletion(
-            model=self._model_name(),
-            messages=all_messages,
-            temperature=temperature or self.config.temperature,
-            max_tokens=max_tokens or self.config.max_tokens,
-            api_key=self.config.api_key or None,
-            api_base=self.config.base_url or None,
-            stream=False,
-        )
+        overrides: dict = {"messages": all_messages, "stream": False}
+        if temperature is not None:
+            overrides["temperature"] = temperature
+        if max_tokens is not None:
+            overrides["max_tokens"] = max_tokens
+
+        response = await litellm.acompletion(**self._common_kwargs(**overrides))
         return response.choices[0].message.content or ""
 
     async def stream(
@@ -59,15 +75,13 @@ class LLMProvider:
             all_messages.append({"role": "system", "content": system})
         all_messages.extend(messages)
 
-        response = await litellm.acompletion(
-            model=self._model_name(),
-            messages=all_messages,
-            temperature=temperature or self.config.temperature,
-            max_tokens=max_tokens or self.config.max_tokens,
-            api_key=self.config.api_key or None,
-            api_base=self.config.base_url or None,
-            stream=True,
-        )
+        overrides: dict = {"messages": all_messages, "stream": True}
+        if temperature is not None:
+            overrides["temperature"] = temperature
+        if max_tokens is not None:
+            overrides["max_tokens"] = max_tokens
+
+        response = await litellm.acompletion(**self._common_kwargs(**overrides))
 
         async for chunk in response:
             delta = chunk.choices[0].delta
