@@ -11,6 +11,7 @@ interface AppState {
 
   setConversations: (c: Conversation[]) => void;
   addConversation: (c: Conversation) => void;
+  removeConversation: (id: string) => void;
   setActiveConversation: (id: string | null) => void;
   setMessages: (m: Message[]) => void;
   appendStreamingToken: (token: string) => void;
@@ -30,6 +31,12 @@ export const useAppStore = create<AppState>((set) => ({
 
   setConversations: (c) => set({ conversations: c }),
   addConversation: (c) => set((s) => ({ conversations: [c, ...s.conversations] })),
+  removeConversation: (id) =>
+    set((s) => ({
+      conversations: s.conversations.filter((c) => c.id !== id),
+      activeConversationId: s.activeConversationId === id ? null : s.activeConversationId,
+      messages: s.activeConversationId === id ? [] : s.messages,
+    })),
   setActiveConversation: (id) => set({ activeConversationId: id }),
   setMessages: (m) => set({ messages: m }),
   appendStreamingToken: (token) =>

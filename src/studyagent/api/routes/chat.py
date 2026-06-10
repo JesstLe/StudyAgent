@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import time
 import uuid
 from datetime import datetime, timezone
+
+logger = logging.getLogger(__name__)
 
 from fastapi import APIRouter, Depends
 from sqlalchemy import select
@@ -128,6 +131,7 @@ async def stream_chat(request: ChatRequest, db: AsyncSession = Depends(get_db)):
         async for token in tutor.stream(
             messages=request.messages,
             session_type=request.session_type,
+            conversation_id=conv_id,
         ):
             collected.append(token)
             yield f"data: {json.dumps({'type': 'token', 'content': token})}\n\n"
@@ -138,27 +142,38 @@ async def stream_chat(request: ChatRequest, db: AsyncSession = Depends(get_db)):
         yield f"data: {json.dumps({'type': 'done', 'conversation_id': conv_id})}\n\n"
 
         async def _save_and_extract():
-            assistant_msg = Message(
-                id=str(uuid.uuid4()),
-                conversation_id=conv_id,
-                role="assistant",
-                content=full_response,
-                model_used=tutor.llm.config.model,
-                latency_ms=latency,
-            )
-            factory = create_session_factory()
-            async with factory() as save_session:
-                save_session.add(assistant_msg)
-                conv_update = await save_session.get(Conversation, conv_id)
-                if conv_update:
-                    conv_update.message_count += 1
-                await save_session.commit()
-
-                await _extract_and_persist_concepts(
-                    request.messages, full_response, save_session
+            import sys
+            try:
+                assistant_msg = Message(
+                    id=str(uuid.uuid4()),
+                    conversation_id=conv_id,
+                    role="assistant",
+                    content=full_response,
+                    model_used=tutor.llm.config.model,
+                    latency_ms=latency,
                 )
+                factory = create_session_factory()
+                async with factory() as save_session:
+                    save_session.add(assistant_msg)
+                    conv_update = await save_session.get(Conversation, conv_id)
+                    if conv_update:
+                        conv_update.message_count += 1
+                    await save_session.commit()
+                    print(f"[studyagent] Saved assistant message for conv {conv_id}", flush=True)
 
-        asyncio.ensure_future(_save_and_extract())
+                    await asyncio.sleep(5)
+                    result = await _extract_and_persist_concepts(
+                        request.messages, full_response, save_session
+                    )
+                    print(f"[studyagent] Concept extraction result: {result}", flush=True)
+            except Exception:
+                import traceback
+                traceback.print_exc(file=sys.stderr)
+                sys.stderr.flush()
+
+        # Yield a keep-alive comment to ensure "done" is flushed before blocking
+        yield ": saving\n\n"
+        await _save_and_extract()
 
     return StreamingResponse(
         event_stream(),
@@ -168,6 +183,17 @@ async def stream_chat(request: ChatRequest, db: AsyncSession = Depends(get_db)):
             "X-Accel-Buffering": "no",
         },
     )
+
+
+@router.delete("/conversations/{conversation_id}")
+async def delete_conversation(conversation_id: str, db: AsyncSession = Depends(get_db)):
+    conv = await db.get(Conversation, conversation_id)
+    if not conv:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    await db.delete(conv)
+    await db.commit()
+    return {"ok": True}
 
 
 @router.post("/conversations", response_model=ConversationResponse)

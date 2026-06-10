@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import AsyncGenerator
 
@@ -7,24 +8,12 @@ from studyagent.agents.tutor.agent import TutorAgent
 from studyagent.core.llm import LLMProvider
 
 
-EXTRACTION_PROMPT = """You are a CS concept extractor. Given a conversation between a tutor and student, extract:
+EXTRACTION_INSTRUCTION = """Extract CS concepts from this tutoring session. Return JSON:
+{"concepts":[{"name":"...","domain":"os|data_structures|algorithms|networks|compilers|databases|distributed_systems|math|architecture","difficulty":0.5,"description":"..."}],"relations":[{"source":"...","target":"...","type":"prerequisite|builds_on|related|part_of|contrasts_with"}]}
 
-1. **Concepts** discussed — each with a name, domain, difficulty (0-1), and one-line description.
-2. **Relations** between concepts — with type (prerequisite, builds_on, related, part_of, contrasts_with).
+Session:"""
 
-Domains: data_structures, algorithms, os, networks, programming_languages, compilers, databases, distributed_systems, math, architecture
-
-Return ONLY valid JSON in this exact format:
-{
-  "concepts": [
-    {"name": "B-tree", "domain": "data_structures", "difficulty": 0.6, "description": "Balanced tree optimized for disk I/O"}
-  ],
-  "relations": [
-    {"source": "B-tree", "target": "Binary Search Tree", "type": "builds_on"}
-  ]
-}
-
-Be precise with concept names. Only include real, well-defined CS concepts. If nothing meaningful was discussed, return empty arrays."""
+MAX_EXTRACTION_CHARS = 600
 
 LEARNING_PATH_PROMPT = """Given a set of CS concepts with prerequisite relations and a learner's current mastery levels, suggest an optimal learning path.
 
@@ -47,20 +36,37 @@ class KnowledgeGraphAgent:
         self._llm = llm or LLMProvider()
 
     async def extract_concepts(self, messages: list[dict[str, str]]) -> dict:
-        conversation_text = "\n".join(f"{m['role']}: {m['content']}" for m in messages)
-        response = await self._llm.generate(
-            messages=[{"role": "user", "content": conversation_text}],
-            system=EXTRACTION_PROMPT,
-            temperature=0.1,
-            max_tokens=2000,
+        conversation_text = "\n".join(
+            f"{m['role']}: {m['content'][:300]}" for m in messages
         )
+        if len(conversation_text) > MAX_EXTRACTION_CHARS:
+            conversation_text = conversation_text[:MAX_EXTRACTION_CHARS]
+        prompt = EXTRACTION_INSTRUCTION + "\n" + conversation_text
+        response = ""
+        for attempt in range(3):
+            tokens: list[str] = []
+            async for token in self._llm.stream(
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.1,
+                max_tokens=2000,
+            ):
+                tokens.append(token)
+            response = "".join(tokens)
+            if response.strip():
+                break
+            await asyncio.sleep(2)
+        if not response.strip():
+            return {"concepts": [], "relations": []}
         try:
             return json.loads(response)
         except json.JSONDecodeError:
             start = response.find("{")
             end = response.rfind("}") + 1
             if start >= 0 and end > start:
-                return json.loads(response[start:end])
+                try:
+                    return json.loads(response[start:end])
+                except json.JSONDecodeError:
+                    pass
             return {"concepts": [], "relations": []}
 
     async def suggest_learning_path(

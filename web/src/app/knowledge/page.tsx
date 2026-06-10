@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { Network, Filter, Search, Tag, Cpu, Database, Globe, Code } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 import { cn } from "@/lib/utils";
@@ -34,6 +35,7 @@ export default function KnowledgePage() {
   const [concepts, setConcepts] = useState<Concept[]>([]);
   const [selectedDomain, setSelectedDomain] = useState<string>("all");
   const [loading, setLoading] = useState(true);
+  const router = useRouter();
 
   useEffect(() => {
     const url = selectedDomain === "all" ? "/concepts" : `/concepts?domain=${selectedDomain}`;
@@ -112,7 +114,11 @@ export default function KnowledgePage() {
               return (
                 <div
                   key={c.id}
-                  className="group bg-[var(--card)] rounded-2xl p-5 border border-[var(--border)] hover:border-[var(--accent)]/50 transition-all hover:shadow-xl hover:shadow-[var(--accent)]/5"
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => router.push(`/?ask=${encodeURIComponent(c.name)}`)}
+                  onKeyDown={(e) => e.key === "Enter" && router.push(`/?ask=${encodeURIComponent(c.name)}`)}
+                  className="group bg-[var(--card)] rounded-2xl p-5 border border-[var(--border)] hover:border-[var(--accent)]/50 transition-all hover:shadow-xl hover:shadow-[var(--accent)]/5 cursor-pointer"
                 >
                   <div className="flex items-start justify-between gap-4 mb-3">
                     <div className="flex flex-col gap-1">
