@@ -7,6 +7,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    Numeric,
     String,
     Text,
     UniqueConstraint,
@@ -275,3 +276,85 @@ class QuizAttempt(Base):
     completed_at: Mapped[datetime | None] = mapped_column()
 
     __table_args__ = (Index("idx_quiz_user", "user_id"),)
+
+
+# --- Payment System Models ---
+
+
+class Order(Base):
+    __tablename__ = "orders"
+
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
+    )
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    order_no: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    title: Mapped[str] = mapped_column(String(500), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    amount: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False)
+    currency: Mapped[str] = mapped_column(String(10), default="CNY")
+    status: Mapped[str] = mapped_column(
+        String(20), default="pending"
+    )  # pending | paid | cancelled | refunded | expired
+    payment_channel: Mapped[str | None] = mapped_column(String(50))
+    paid_at: Mapped[datetime | None] = mapped_column()
+    expired_at: Mapped[datetime | None] = mapped_column()
+    created_at: Mapped[datetime] = mapped_column(
+        server_default=func.now(), default=lambda: datetime.now(timezone.utc)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        server_default=func.now(),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+    payments: Mapped[list["Payment"]] = relationship(
+        "Payment", back_populates="order", order_by="Payment.created_at.desc()"
+    )
+
+    __table_args__ = (
+        Index("idx_orders_user", "user_id", "created_at"),
+        Index("idx_orders_status", "status"),
+        Index("idx_orders_no", "order_no"),
+    )
+
+
+class Payment(Base):
+    __tablename__ = "payments"
+
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
+    )
+    order_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("orders.id", ondelete="CASCADE"), nullable=False
+    )
+    trade_no: Mapped[str] = mapped_column(String(128), unique=True, nullable=False)
+    channel: Mapped[str] = mapped_column(String(50), nullable=False)  # alipay | wxpay | qqpay
+    amount: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False)
+    fee_rate: Mapped[float] = mapped_column(Numeric(5, 4), default=0.0)
+    fee_amount: Mapped[float] = mapped_column(Numeric(12, 2), default=0.0)
+    status: Mapped[str] = mapped_column(
+        String(20), default="created"
+    )  # created | pending | success | failed
+    payment_url: Mapped[str | None] = mapped_column(Text)
+    epay_trade_no: Mapped[str | None] = mapped_column(String(128))
+    paid_at: Mapped[datetime | None] = mapped_column()
+    callback_raw: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        server_default=func.now(), default=lambda: datetime.now(timezone.utc)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        server_default=func.now(),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+    order: Mapped["Order"] = relationship("Order", back_populates="payments")
+
+    __table_args__ = (
+        Index("idx_payments_order", "order_id"),
+        Index("idx_payments_trade_no", "trade_no"),
+        Index("idx_payments_status", "status"),
+    )

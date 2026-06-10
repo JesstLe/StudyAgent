@@ -43,11 +43,24 @@ class AgentConfig(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="agent_")
 
 
+class EpayConfig(BaseSettings):
+    enabled: bool = Field(default=False)
+    pid: str = Field(default="")
+    key: str = Field(default="")
+    gateway_url: str = Field(default="https://epay.example.com")
+    notify_url: str = Field(default="")
+    return_url: str = Field(default="")
+    sign_type: str = Field(default="MD5")
+
+    model_config = SettingsConfigDict(env_prefix="epay_")
+
+
 class AppConfig(BaseSettings):
     llm: LLMConfig = Field(default_factory=LLMConfig)
     database: DatabaseConfig = Field(default_factory=DatabaseConfig)
     server: ServerConfig = Field(default_factory=ServerConfig)
     agent: AgentConfig = Field(default_factory=AgentConfig)
+    epay: EpayConfig = Field(default_factory=EpayConfig)
     redis_url: str = Field(default="")
     rate_limit_rpm: int = Field(default=60, ge=1)
 

@@ -10,6 +10,7 @@ from studyagent.api.middleware import RateLimitMiddleware
 from studyagent.api.routes.analytics import router as analytics_router
 from studyagent.api.routes.chat import router as chat_router
 from studyagent.api.routes.knowledge import router as knowledge_router
+from studyagent.api.routes.payment import router as payment_router
 from studyagent.api.routes.quiz import router as quiz_router
 from studyagent.api.routes.review import router as review_router
 from studyagent.core.config import load_config
@@ -46,6 +47,7 @@ def create_app() -> FastAPI:
     app.include_router(review_router)
     app.include_router(quiz_router)
     app.include_router(analytics_router)
+    app.include_router(payment_router)
 
     @app.get("/health")
     async def health():
